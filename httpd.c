@@ -30,16 +30,70 @@ typedef struct sockaddr SA;
 
 int open_listenfd(char *port);
 
+/*  
+ * open_listenfd - Open and return a listening socket on port. This
+ *     function is reentrant and protocol-independent.
+ *
+ *     On error, returns: 
+ *       -2 for getaddrinfo error
+ *       -1 with errno set for other errors.
+ */
+int open_listenfd(char *port)  {
+  struct addrinfo hints, *listp, *p;
+  int listenfd, rc, optval = 1;
+
+  /* Get a list of potential server addresses */
+  memset(&hints, 0, sizeof(struct addrinfo));
+  hints.ai_socktype = SOCK_STREAM;             /* Accept connections */
+  hints.ai_flags = AI_PASSIVE | AI_ADDRCONFIG; /* ... on any IP address */
+  hints.ai_flags |= AI_NUMERICSERV;            /* ... using port number */
+  if ((rc = getaddrinfo(NULL, port, &hints, &listp)) != 0) {
+    fprintf(stderr, "getaddrinfo failed (port %s): %s\n", port, gai_strerror(rc));
+    return -2;
+  }
+
+  /* Walk the list for one that we can bind to */
+  for (p = listp; p; p = p->ai_next) {
+    /* Create a socket descriptor */
+    if ((listenfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) < 0)
+      continue; /* Socket failed, try the next */
+
+    /* Eliminates "Address already in use" error from bind */
+    setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, //line:netp:csapp:setsockopt
+               (const void *)&optval, sizeof(int));
+
+    /* Bind the descriptor to the address */
+    if (bind(listenfd, p->ai_addr, p->ai_addrlen) == 0)
+      break; /* Success */
+    if (close(listenfd) < 0) { /* Bind failed, try the next */
+      fprintf(stderr, "open_listenfd close failed: %s\n", strerror(errno));
+      return -1;
+    }
+  }
+
+  /* Clean up */
+  freeaddrinfo(listp);
+  if (!p) /* No address worked */
+    return -1;
+
+  /* Make it a listening socket ready to accept connection requests */
+  if (listen(listenfd, LISTENQ) < 0) {
+    close(listenfd);
+    return -1;
+  }
+  return listenfd;
+}
+
 /* --------------------------------------------------
                       rio package
   --------------------------------------------------- */
 
 #define RIO_BUFSIZE 8192
 typedef struct {
-    int rio_fd;                /* Descriptor for this internal buf */
-    int rio_cnt;               /* Unread bytes in internal buf */
-    char *rio_bufptr;          /* Next unread byte in internal buf */
-    char rio_buf[RIO_BUFSIZE]; /* Internal buffer */
+  int rio_fd;                /* Descriptor for this internal buf */
+  int rio_cnt;               /* Unread bytes in internal buf */
+  char *rio_bufptr;          /* Next unread byte in internal buf */
+  char rio_buf[RIO_BUFSIZE]; /* Internal buffer */
 } rio_t;
 
 ssize_t rio_readn(int fd, void *usrbuf, size_t n);
@@ -48,6 +102,40 @@ void rio_readinitb(rio_t *rp, int fd);
 ssize_t	rio_readnb(rio_t *rp, void *usrbuf, size_t n);
 ssize_t	rio_readlineb(rio_t *rp, void *usrbuf, size_t maxlen);
 
+/* --------------------------------------------------
+                      error handle
+  --------------------------------------------------- */
+
+void unix_error(char *msg);
+void posix_error(int code, char *msg);
+void dns_error(char *msg);
+void gai_error(int code, char *msg);
+void app_error(const char *format, ...);
+
+ /* Unix-style error */
+void unix_error(char *msg) {
+  fprintf(stderr, "%s: %s\n", msg, strerror(errno));
+  exit(0);
+}
+
+/* Posix-style error */
+void posix_error(int code, char *msg) {
+  fprintf(stderr, "%s: %s\n", msg, strerror(code));
+  exit(0);
+}
+
+/* Getaddrinfo-style error */
+void gai_error(int code, char *msg) {
+  fprintf(stderr, "%s: %s\n", msg, gai_strerror(code));
+  exit(0);
+}
+
+void app_error(const char *format, ...) {
+  va_list ap;
+  va_start(ap, format);
+  vfprintf(stderr, format, ap);
+  va_end(ap);
+}
 
 /* --------------------------------------------------
                         httpd
@@ -59,7 +147,6 @@ struct {
 } G;
 
 void show_usage(const char *name);
-void app_error(const char *format, ...);
 void normalize_dir(char *dir);
 void doit(int fd);
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg);
@@ -130,69 +217,8 @@ int main(int argc, char *argv[]) {
   return 0;
 }
 
-/*  
- * open_listenfd - Open and return a listening socket on port. This
- *     function is reentrant and protocol-independent.
- *
- *     On error, returns: 
- *       -2 for getaddrinfo error
- *       -1 with errno set for other errors.
- */
-int open_listenfd(char *port)  {
-  struct addrinfo hints, *listp, *p;
-  int listenfd, rc, optval = 1;
-
-  /* Get a list of potential server addresses */
-  memset(&hints, 0, sizeof(struct addrinfo));
-  hints.ai_socktype = SOCK_STREAM;             /* Accept connections */
-  hints.ai_flags = AI_PASSIVE | AI_ADDRCONFIG; /* ... on any IP address */
-  hints.ai_flags |= AI_NUMERICSERV;            /* ... using port number */
-  if ((rc = getaddrinfo(NULL, port, &hints, &listp)) != 0) {
-    fprintf(stderr, "getaddrinfo failed (port %s): %s\n", port, gai_strerror(rc));
-    return -2;
-  }
-
-  /* Walk the list for one that we can bind to */
-  for (p = listp; p; p = p->ai_next) {
-    /* Create a socket descriptor */
-    if ((listenfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) < 0)
-      continue; /* Socket failed, try the next */
-
-    /* Eliminates "Address already in use" error from bind */
-    setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, //line:netp:csapp:setsockopt
-               (const void *)&optval, sizeof(int));
-
-    /* Bind the descriptor to the address */
-    if (bind(listenfd, p->ai_addr, p->ai_addrlen) == 0)
-      break; /* Success */
-    if (close(listenfd) < 0) { /* Bind failed, try the next */
-      fprintf(stderr, "open_listenfd close failed: %s\n", strerror(errno));
-      return -1;
-    }
-  }
-
-  /* Clean up */
-  freeaddrinfo(listp);
-  if (!p) /* No address worked */
-    return -1;
-
-  /* Make it a listening socket ready to accept connection requests */
-  if (listen(listenfd, LISTENQ) < 0) {
-    close(listenfd);
-    return -1;
-  }
-  return listenfd;
-}
-
 void show_usage(const char *name) {
   printf("Usage: %s [-h, --help] -p, --port PORT DIR\n", name);
-}
-
-void app_error(const char *format, ...) {
-  va_list ap;
-  va_start(ap, format);
-  vfprintf(stderr, format, ap);
-  va_end(ap);
 }
 
 void normalize_dir(char *dir) {
