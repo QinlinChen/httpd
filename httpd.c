@@ -379,6 +379,7 @@ void read_requesthdrs(rio_t *rp);
 int parse_uri(char *uri, char *filename);
 void get_filetype(char *filename, char *filetype);
 void serve_static(int fd, char *filename, int filesize);
+void sigint_handle(int signum);
 
 int main(int argc, char *argv[]) {
   int opt, listenfd, connfd;
@@ -389,6 +390,9 @@ int main(int argc, char *argv[]) {
   /* initialize global */
   G.port = NULL;
   G.site = NULL;
+
+  /* initialize signal handle */
+  signal(SIGINT, sigint_handle);
 
   /* process args */
   while (1) {
@@ -583,4 +587,8 @@ void serve_static(int fd, char *filename, int filesize) {
   Close(srcfd);
   Rio_writen(fd, srcp, filesize);
   Munmap(srcp, filesize);
+}
+
+void sigint_handle(int signum) {
+  printf("Httpd is shut down\n");
 }
