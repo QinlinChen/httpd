@@ -591,4 +591,5 @@ void serve_static(int fd, char *filename, int filesize) {
 
 void sigint_handle(int signum) {
   printf("Httpd is shut down\n");
+  exit(0);
 }
