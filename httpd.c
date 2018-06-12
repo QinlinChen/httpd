@@ -205,7 +205,7 @@ int main(int argc, char *argv[]) {
   while (1) {
     clientlen = sizeof(clientaddr);
     
-    if (connfd = accept(listenfd, (SA *)&clientaddr, &clientlen) < 0) {
+    if ((connfd = accept(listenfd, (SA *)&clientaddr, &clientlen)) < 0) {
       unix_error("Accept error");
       exit(1);
     }
