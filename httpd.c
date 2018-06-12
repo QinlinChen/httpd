@@ -17,7 +17,6 @@ void app_error(const char *format, ...);
 int main(int argc, char *argv[]) {
   int opt;
 
-  app_error("hello, %s, %d\n", "ab", 123);
   /* initialize global */
   G.port = 0;
   G.site = NULL;
@@ -36,31 +35,36 @@ int main(int argc, char *argv[]) {
 			break;
 		
 		switch (opt) {
-			case 'p': G.port = atoi(optarg); break;
+			case 'p': 
+        G.port = atoi(optarg); 
+        break;
+      case 'h':
 			/* 0, ?, etc. */
-			default: show_usage(argv[0]);
+			default: 
+        show_usage(argv[0]);
+        exit(1);
 		}	
 	} 
 
-  if (G.port == 0)
+  /* handle illegal input */
+  if (G.port == 0) {
     show_usage(argv[0]);
-  
-  if (optind >= argc) {
-    fprintf(stderr, "Expected argument after options\n");
     exit(1);
   }
-
-  while (argv[optind]) {
-    printf("name argument = %s\n", argv[optind++]);
+  if (optind >= argc) {
+    app_error("Expected argument after options\n");
+    exit(1);
   }
+  G.site = argv[optind];
 
+  printf("httpd(port: %d, site: %s) is running.\n", G.port, G.site);
+  
   return 0;
 }
 
 void show_usage(const char *name) {
-    printf("Usage: %s [-p, --show-pids] "
-		"[-n, --numeric-sort] [-V, --version]\n", name);
-    exit(1);
+  printf("Usage: %s -p, --port PORT "
+         "[-h, --help]\n", name);
 }
 
 void app_error(const char *format, ...) {
