@@ -135,6 +135,14 @@ int main(int argc, char *argv[]) {
   return 0;
 }
 
+/*  
+ * open_listenfd - Open and return a listening socket on port. This
+ *     function is reentrant and protocol-independent.
+ *
+ *     On error, returns: 
+ *       -2 for getaddrinfo error
+ *       -1 with errno set for other errors.
+ */
 int open_listenfd(char *port) 
 {
     struct addrinfo hints, *listp, *p;
