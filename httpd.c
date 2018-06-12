@@ -57,14 +57,13 @@ int main(int argc, char *argv[]) {
   }
   G.site = argv[optind];
 
-  printf("httpd(port: %d, site: %s) is running.\n", G.port, G.site);
-  
+  printf("Httpd is running. (port=%d, site=%s)\n", G.port, G.site);
+
   return 0;
 }
 
 void show_usage(const char *name) {
-  printf("Usage: %s -p, --port PORT "
-         "[-h, --help]\n", name);
+  printf("Usage: %s [-h, --help] -p, --port PORT DIR\n", name);
 }
 
 void app_error(const char *format, ...) {
