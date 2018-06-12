@@ -28,7 +28,7 @@ typedef struct sockaddr SA;
 #define MAXBUF   8192  /* Max I/O buffer size */
 #define LISTENQ  1024  /* Second argument to listen() */
 
-int open_listenfd(char *port);
+int open_listenfd(const char *port);
 
 /*  
  * open_listenfd - Open and return a listening socket on port. This
@@ -38,7 +38,7 @@ int open_listenfd(char *port);
  *       -2 for getaddrinfo error
  *       -1 with errno set for other errors.
  */
-int open_listenfd(char *port)  {
+int open_listenfd(const char *port)  {
   struct addrinfo hints, *listp, *p;
   int listenfd, rc, optval = 1;
 
@@ -59,7 +59,7 @@ int open_listenfd(char *port)  {
       continue; /* Socket failed, try the next */
 
     /* Eliminates "Address already in use" error from bind */
-    setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, //line:netp:csapp:setsockopt
+    setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR,
                (const void *)&optval, sizeof(int));
 
     /* Bind the descriptor to the address */
@@ -102,28 +102,164 @@ void rio_readinitb(rio_t *rp, int fd);
 ssize_t	rio_readnb(rio_t *rp, void *usrbuf, size_t n);
 ssize_t	rio_readlineb(rio_t *rp, void *usrbuf, size_t maxlen);
 
+/*
+ * rio_readn - Robustly read n bytes (unbuffered)
+ */
+ssize_t rio_readn(int fd, void *usrbuf, size_t n) {
+  size_t nleft = n;
+  ssize_t nread;
+  char *bufp = usrbuf;
+
+  while (nleft > 0) {
+    if ((nread = read(fd, bufp, nleft)) < 0) {
+      if (errno == EINTR) /* Interrupted by sig handler return */
+        nread = 0;        /* and call read() again */
+      else
+        return -1; /* errno set by read() */
+    }
+    else if (nread == 0)
+      break; /* EOF */
+    nleft -= nread;
+    bufp += nread;
+  }
+  return (n - nleft); /* Return >= 0 */
+}
+
+/*
+ * rio_writen - Robustly write n bytes (unbuffered)
+ */
+ssize_t rio_writen(int fd, void *usrbuf, size_t n) {
+  size_t nleft = n;
+  ssize_t nwritten;
+  char *bufp = usrbuf;
+
+  while (nleft > 0) {
+    if ((nwritten = write(fd, bufp, nleft)) <= 0) {
+      if (errno == EINTR) /* Interrupted by sig handler return */
+        nwritten = 0;     /* and call write() again */
+      else
+        return -1; /* errno set by write() */
+    }
+    nleft -= nwritten;
+    bufp += nwritten;
+  }
+  return n;
+}
+
+/* 
+ * rio_read - This is a wrapper for the Unix read() function that
+ *    transfers min(n, rio_cnt) bytes from an internal buffer to a user
+ *    buffer, where n is the number of bytes requested by the user and
+ *    rio_cnt is the number of unread bytes in the internal buffer. On
+ *    entry, rio_read() refills the internal buffer via a call to
+ *    read() if the internal buffer is empty.
+ */
+static ssize_t rio_read(rio_t *rp, char *usrbuf, size_t n) {
+  int cnt;
+
+  while (rp->rio_cnt <= 0) { /* Refill if buf is empty */
+    rp->rio_cnt = read(rp->rio_fd, rp->rio_buf, sizeof(rp->rio_buf));
+    if (rp->rio_cnt < 0) {
+      if (errno != EINTR) /* Interrupted by sig handler return */
+        return -1;
+    }
+    else if (rp->rio_cnt == 0) /* EOF */
+      return 0;
+    else
+      rp->rio_bufptr = rp->rio_buf; /* Reset buffer ptr */
+  }
+
+  /* Copy min(n, rp->rio_cnt) bytes from internal buf to user buf */
+  cnt = n;
+  if (rp->rio_cnt < n)
+    cnt = rp->rio_cnt;
+  memcpy(usrbuf, rp->rio_bufptr, cnt);
+  rp->rio_bufptr += cnt;
+  rp->rio_cnt -= cnt;
+  return cnt;
+}
+
+/*
+ * rio_readinitb - Associate a descriptor with a read buffer and reset buffer
+ */
+void rio_readinitb(rio_t *rp, int fd) {
+  rp->rio_fd = fd;
+  rp->rio_cnt = 0;
+  rp->rio_bufptr = rp->rio_buf;
+}
+
+/*
+ * rio_readnb - Robustly read n bytes (buffered)
+ */
+ssize_t rio_readnb(rio_t *rp, void *usrbuf, size_t n) {
+  size_t nleft = n;
+  ssize_t nread;
+  char *bufp = usrbuf;
+
+  while (nleft > 0) {
+    if ((nread = rio_read(rp, bufp, nleft)) < 0)
+      return -1; /* errno set by read() */
+    else if (nread == 0)
+      break; /* EOF */
+    nleft -= nread;
+    bufp += nread;
+  }
+  return (n - nleft); /* return >= 0 */
+}
+
+/* 
+ * rio_readlineb - Robustly read a text line (buffered)
+ */
+ssize_t rio_readlineb(rio_t *rp, void *usrbuf, size_t maxlen) {
+  int n, rc;
+  char c, *bufp = usrbuf;
+
+  for (n = 1; n < maxlen; n++) {
+    if ((rc = rio_read(rp, &c, 1)) == 1) {
+      *bufp++ = c;
+      if (c == '\n') {
+        n++;
+        break;
+      }
+    }
+    else if (rc == 0) {
+      if (n == 1)
+        return 0; /* EOF, no data read */
+      else
+        break; /* EOF, some data was read */
+    }
+    else
+      return -1; /* Error */
+  }
+  *bufp = 0;
+  return n - 1;
+}
+
 /* --------------------------------------------------
                       error handle
   --------------------------------------------------- */
 
-void unix_error(char *msg);
-void posix_error(int code, char *msg);
-void gai_error(int code, char *msg);
+void unix_error(const char *msg);
+void posix_error(int code, const char *msg);
+void gai_error(int code, const char *msg);
 void app_error(const char *format, ...);
 
  /* Unix-style error */
-void unix_error(char *msg) {
+void unix_error(const char *msg) {
   fprintf(stderr, "%s: %s\n", msg, strerror(errno));
+  exit(1);
 }
 
 /* Posix-style error */
-void posix_error(int code, char *msg) {
+void posix_error(int code, const char *msg) {
   fprintf(stderr, "%s: %s\n", msg, strerror(code));
+  exit(1);
 }
 
 /* Getaddrinfo-style error */
-void gai_error(int code, char *msg) {
+void gai_error(int code, const char *msg) {
   fprintf(stderr, "%s: %s\n", msg, gai_strerror(code));
+  exit(1);
 }
 
 /* Application error */
@@ -132,6 +268,97 @@ void app_error(const char *format, ...) {
   va_start(ap, format);
   vfprintf(stderr, format, ap);
   va_end(ap);
+  exit(1);
+}
+
+/* --------------------------------------------------
+                        wrappers
+  --------------------------------------------------- */
+
+int Open_listenfd(const char *port) {
+  int rc;
+
+  if ((rc = open_listenfd(port)) < 0)
+    unix_error("Open_listenfd error");
+  return rc;
+}
+
+ssize_t Rio_readn(int fd, void *ptr, size_t nbytes) {
+  ssize_t n;
+
+  if ((n = rio_readn(fd, ptr, nbytes)) < 0)
+    unix_error("Rio_readn error");
+  return n;
+}
+
+void Rio_writen(int fd, void *usrbuf, size_t n) {
+  if (rio_writen(fd, usrbuf, n) != n)
+    unix_error("Rio_writen error");
+}
+
+void Rio_readinitb(rio_t *rp, int fd) {
+  rio_readinitb(rp, fd);
+}
+
+ssize_t Rio_readnb(rio_t *rp, void *usrbuf, size_t n) {
+  ssize_t rc;
+
+  if ((rc = rio_readnb(rp, usrbuf, n)) < 0)
+    unix_error("Rio_readnb error");
+  return rc;
+}
+
+ssize_t Rio_readlineb(rio_t *rp, void *usrbuf, size_t maxlen) {
+  ssize_t rc;
+
+  if ((rc = rio_readlineb(rp, usrbuf, maxlen)) < 0)
+    unix_error("Rio_readlineb error");
+  return rc;
+}
+
+int Accept(int s, struct sockaddr *addr, socklen_t *addrlen) {
+  int rc;
+
+  if ((rc = accept(s, addr, addrlen)) < 0)
+    unix_error("Accept error");
+  return rc;
+}
+
+int Open(const char *pathname, int flags, mode_t mode) {
+  int rc;
+
+  if ((rc = open(pathname, flags, mode)) < 0)
+    unix_error("Open error");
+  return rc;
+}
+
+void Close(int fd) {
+  int rc;
+
+  if ((rc = close(fd)) < 0)
+    unix_error("Close error");
+}
+
+void Getnameinfo(const struct sockaddr *sa, socklen_t salen, char *host, 
+                 size_t hostlen, char *serv, size_t servlen, int flags) {
+  int rc;
+
+  if ((rc = getnameinfo(sa, salen, host, hostlen, serv,
+                        servlen, flags)) != 0)
+    gai_error(rc, "Getnameinfo error");
+}
+
+void *Mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset) {
+  void *ptr;
+
+  if ((ptr = mmap(addr, len, prot, flags, fd, offset)) == ((void *)-1))
+    unix_error("mmap error");
+  return (ptr);
+}
+
+void Munmap(void *start, size_t length) {
+  if (munmap(start, length) < 0)
+    unix_error("munmap error");
 }
 
 /* --------------------------------------------------
@@ -146,15 +373,18 @@ struct {
 void show_usage(const char *name);
 void normalize_dir(char *dir);
 void doit(int fd);
-void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg);
+void clienterror(int fd, const char *cause, const char *errnum,
+                 const char *shortmsg, const char *longmsg);
 void read_requesthdrs(rio_t *rp);
-int parse_uri(char *uri, char *filename, char *cgiargs);
+int parse_uri(char *uri, char *filename);
 void get_filetype(char *filename, char *filetype);
 void serve_static(int fd, char *filename, int filesize);
-void serve_dynamic(int fd, char *filename, char *cgiargs);
 
 int main(int argc, char *argv[]) {
-  int opt;
+  int opt, rc, listenfd, connfd;
+  char hostname[MAXLINE], port[MAXLINE];
+  struct sockaddr_in clientaddr;
+  socklen_t clientlen;
 
   /* initialize global */
   G.port = NULL;
@@ -177,48 +407,28 @@ int main(int argc, char *argv[]) {
 			case 'p': G.port = strdup(optarg); break;
       case 'h':
 			/* 0, ?, etc. */
-			default: show_usage(argv[0]); exit(1);
+			default: show_usage(argv[0]);
 		}	
 	} 
 
   /* handle illegal input */
-  if (G.port == NULL) {
+  if (G.port == NULL)
     show_usage(argv[0]);
-    exit(1);
-  }
-  if (optind >= argc) {
+  if (optind >= argc)
     app_error("Expected argument after options\n");
-    exit(1);
-  }
   G.site = strdup(argv[optind]);
   normalize_dir(G.site);
 
   /* run */
-  printf("Httpd is running. (port=%s, site=%s)\n", G.port, G.site);
-
-  int listenfd, connfd, rc;
-  char hostname[MAXLINE], port[MAXLINE];
-  struct sockaddr_in clientaddr;
-  socklen_t clientlen;
-
-  listenfd = open_listenfd(G.port);
+  printf("Httpd is starting. (port=%s, site=%s)\n", G.port, G.site);
+  listenfd = Open_listenfd(G.port);
   while (1) {
     clientlen = sizeof(clientaddr);
-    
-    if ((connfd = accept(listenfd, (SA *)&clientaddr, &clientlen)) < 0) {
-      unix_error("Accept error");
-      exit(1);
-    }
-
-    if ((rc = getnameinfo((SA *)&clientaddr, clientlen, hostname, MAXLINE,
-                          port, MAXLINE, 0)) != 0) {
-      gai_error(rc, "Getnameinfo error");
-      exit(1);
-    }
-
+    connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen);
+    Getnameinfo((SA *)&clientaddr, clientlen, hostname, MAXLINE, port, MAXLINE, 0);
     printf("Accepted connection from (%s, %s)\n", hostname, port);
-    //doit(connfd);
-    close(connfd);
+    doit(connfd);
+    Close(connfd);
   }
 
   return 0;
@@ -226,6 +436,7 @@ int main(int argc, char *argv[]) {
 
 void show_usage(const char *name) {
   printf("Usage: %s [-h, --help] -p, --port PORT DIR\n", name);
+  exit(1);
 }
 
 void normalize_dir(char *dir) {
@@ -234,180 +445,130 @@ void normalize_dir(char *dir) {
     dir[len - 1] = '\0';
 }
 
-// void doit(int fd)
-// {
-//     int is_static;
-//     char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], version[MAXLINE];
-//     char filename[MAXLINE], cgiargs[MAXLINE];
-//     struct stat sbuf;
-//     rio_t rio;
+void doit(int fd) {
+  char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], version[MAXLINE];
+  char filename[MAXLINE];
+  struct stat sbuf;
+  rio_t rio;
+
+  Rio_readinitb(&rio, fd);
+  if (!Rio_readlineb(&rio, buf, MAXLINE))
+    return;
+  printf("%s", buf);
+  sscanf(buf, "%s %s %s", method, uri, version);
+  if (strcasecmp(method, "GET")) {
+    clienterror(fd, method, "501", "Not Implemented",
+                "We haven't implemented this method");
+    return;
+  }
+  read_requesthdrs(&rio);
+
+  if (parse_uri(uri, filename) != 0) {
+    clienterror(fd, filename, "404", "Not Found",
+                "We couldn't find this file");
+    return;
+  }
+
+  if (stat(filename, &sbuf) < 0) {
+    clienterror(fd, filename, "404", "Not Found",
+                "We couldn't find this file");
+    return;
+  }
     
-//     Rio_readinitb(&rio, fd);
-//     if (!Rio_readlineb(&rio, buf, MAXLINE))
-//         return;
-//     printf("%s", buf);
-//     sscanf(buf, "%s %s %s", method, uri, version);
-//     if (strcasecmp(method, "GET")) {
-//         clienterror(fd, method, "501", "Not Implemented",
-//                     "We haven't implemented this method");
-//         return;
-//     }
-//     read_requesthdrs(&rio);
-    
-//     is_static = parse_uri(uri, filename, cgiargs);
-//     if (stat(filename, &sbuf) < 0) {
-//         clienterror(fd, filename, "404", "Not Found",
-//                     "We couldn't find this file");
-//         return;
-//     }
-    
-//     if (is_static) {
-//         if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) {
-//             clienterror(fd, filename, "403", "Forbidden",
-//                         "We couldn't read the file");
-//             return;
-//         }
-//         serve_static(fd, filename, sbuf.st_size);
-//     }
-//     else {
-//         if (!(S_ISREG(sbuf.st_mode)) || !(S_IXUSR & sbuf.st_mode)) {
-//             clienterror(fd, filename, "403", "Forbidden",
-//                         "We couldn't run the CGI program");
-//             return;
-//         }
-//         serve_dynamic(fd, filename, cgiargs);
-//     }
-// }
+  if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) {
+    clienterror(fd, filename, "403", "Forbidden",
+                "We couldn't read the file");
+    return;
+  }
+  serve_static(fd, filename, sbuf.st_size);
+}
 
-// void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg)
-// {
-//     char buf[MAXLINE], body[MAXBUF];
+void clienterror(int fd, const char *cause, const char *errnum,
+                 const char *shortmsg, const char *longmsg) {
+  char buf[MAXLINE], body[MAXBUF];
 
-//     // Build the HTTP response body
-//     sprintf(body, "<html><title>Error</title>");
-//     sprintf(body, "%s<body bgcolor=""ffffff"">\r\n", body);
-//     sprintf(body, "%s%s: %s\r\n", body, errnum, shortmsg);
-//     sprintf(body, "%s<p>%s: %s\r\n", body, longmsg, cause);
-//     sprintf(body, "%s<hr><em>The Naive Web Server</em>\r\n", body);
+  // Build the HTTP response body
+  sprintf(body, "<html><title>Error</title>");
+  sprintf(body, "%s<body bgcolor=ffffff>\r\n", body);
+  sprintf(body, "%s%s: %s\r\n", body, errnum, shortmsg);
+  sprintf(body, "%s<p>%s: %s\r\n", body, longmsg, cause);
+  sprintf(body, "%s<hr><em>The Naive Http Server</em>\r\n", body);
 
-//     // Print the HTTP response
-//     sprintf(buf, "HTTP/1.0 %s %s\r\n", errnum, shortmsg);
-//     Rio_writen(fd, buf, strlen(buf));
-//     printf("%s", buf);
-//     sprintf(buf, "Content-type: text/html\r\n");
-//     Rio_writen(fd, buf, strlen(buf));
-//     printf("%s", buf);
-//     sprintf(buf, "Content-length: %d\r\n\r\n", (int)strlen(body));
-//     Rio_writen(fd, buf, strlen(buf));
-//     printf("%s", buf);
-//     Rio_writen(fd, body, strlen(body));
-// }
+  // Print the HTTP response
+  sprintf(buf, "HTTP/1.0 %s %s\r\n", errnum, shortmsg);
+  Rio_writen(fd, buf, strlen(buf));
+  printf("%s", buf);
+  sprintf(buf, "Content-type: text/html\r\n");
+  Rio_writen(fd, buf, strlen(buf));
+  printf("%s", buf);
+  sprintf(buf, "Content-length: %d\r\n\r\n", (int)strlen(body));
+  Rio_writen(fd, buf, strlen(buf));
+  printf("%s", buf);
+  Rio_writen(fd, body, strlen(body));
+}
 
-// void read_requesthdrs(rio_t *rp)
-// {
-//     char buf[MAXLINE];
-    
-//     // skip request headers
-//     Rio_readlineb(rp, buf, MAXLINE);
-//     printf("%s", buf);
-//     while (strcmp(buf, "\r\n")) {
-//         Rio_readlineb(rp, buf, MAXLINE);
-//         printf("%s", buf);
-//     }
-// }
+void read_requesthdrs(rio_t *rp) {
+  char buf[MAXLINE];
 
-// int parse_uri(char *uri, char *filename, char *cgiargs)
-// {
-//     char *ptr;
-    
-//     // static content
-//     if (!strstr(uri, "cgi-bin")) {
-//         strcpy(cgiargs, "");
-//         strcpy(filename, workdir);
-//         strcat(filename, uri);
-//         if (uri[strlen(uri) - 1] == '/')
-//             strcat(filename, "index.html");
-//         return 1;
-//     }
-//     // dynamic content
-//     else {
-//         ptr = index(uri, '?');
-//         if (ptr) {
-//             strcpy(cgiargs, ptr + 1);
-//             *ptr = '\0';
-//         }
-//         else
-//             strcpy(cgiargs, "");
-//         strcpy(filename, workdir);
-//         strcat(filename, uri);
-//         return 0;
-//     }
-// }
+  // skip request headers
+  Rio_readlineb(rp, buf, MAXLINE);
+  printf("%s", buf);
+  while (strcmp(buf, "\r\n")) {
+    Rio_readlineb(rp, buf, MAXLINE);
+    printf("%s", buf);
+  }
+}
 
-// void get_filetype(char *filename, char *filetype) 
-// {
-//     if (strstr(filename, ".html"))
-// 	    strcpy(filetype, "text/html");
-//     else if (strstr(filename, ".css"))
-// 	    strcpy(filetype, "text/css");
-//     else if (strstr(filename, ".gif"))
-// 	    strcpy(filetype, "image/gif");
-//     else if (strstr(filename, ".png"))
-// 	    strcpy(filetype, "image/png");
-//     else if (strstr(filename, ".jpg"))
-//         strcpy(filetype, "image/jpeg");
-//     else if (strstr(filename, ".jpeg"))
-//         strcpy(filetype, "image/jpeg");
-//     else if (strstr(filename, ".ico"))
-//         strcpy(filetype, "image/ico");
-//     else if (strstr(filename, ".js"))
-//         strcpy(filetype, "application/js");
-//     else if (strstr(filename, ".json"))
-//         strcpy(filetype, "application/json");
-//     else
-//         strcpy(filetype, "text/plain");
-// }  
+int parse_uri(char *uri, char *filename) {
+  strcpy(filename, G.site);
+  strcat(filename, uri);
+  if (uri[strlen(uri) - 1] == '/')
+    strcat(filename, "index.html");
+  return 0;
+}
 
-// void serve_static(int fd, char *filename, int filesize) 
-// {
-//     int srcfd;
-//     char *srcp, filetype[MAXLINE], buf[MAXBUF];
- 
-//     // Send response headers to client 
-//     get_filetype(filename, filetype);
-//     sprintf(buf, "HTTP/1.0 200 OK\r\n");
-//     sprintf(buf, "%sServer: Naive Web Server\r\n", buf);
-//     sprintf(buf, "%sConnection: close\r\n", buf);
-//     sprintf(buf, "%sContent-length: %d\r\n", buf, filesize);
-//     sprintf(buf, "%sContent-type: %s\r\n\r\n", buf, filetype);
-//     Rio_writen(fd, buf, strlen(buf));
-//     printf("Response headers:\n");
-//     printf("%s", buf);
+void get_filetype(char *filename, char *filetype) {
+  if (strstr(filename, ".html"))
+    strcpy(filetype, "text/html");
+  else if (strstr(filename, ".css"))
+    strcpy(filetype, "text/css");
+  else if (strstr(filename, ".gif"))
+    strcpy(filetype, "image/gif");
+  else if (strstr(filename, ".png"))
+    strcpy(filetype, "image/png");
+  else if (strstr(filename, ".jpg"))
+    strcpy(filetype, "image/jpeg");
+  else if (strstr(filename, ".jpeg"))
+    strcpy(filetype, "image/jpeg");
+  else if (strstr(filename, ".ico"))
+    strcpy(filetype, "image/ico");
+  else if (strstr(filename, ".js"))
+    strcpy(filetype, "application/js");
+  else if (strstr(filename, ".json"))
+    strcpy(filetype, "application/json");
+  else
+    strcpy(filetype, "text/plain");
+}
 
-//     // Send response body to client
-//     srcfd = Open(filename, O_RDONLY, 0);
-//     srcp = Mmap(0, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0);
-//     Close(srcfd);
-//     Rio_writen(fd, srcp, filesize);
-//     Munmap(srcp, filesize);
-// }
+void serve_static(int fd, char *filename, int filesize) {
+  int srcfd;
+  char *srcp, filetype[MAXLINE], buf[MAXBUF];
 
-// void serve_dynamic(int fd, char *filename, char *cgiargs) 
-// {
-//     char buf[MAXLINE], *emptylist[] = { NULL };
+  // Send response headers to client
+  get_filetype(filename, filetype);
+  sprintf(buf, "HTTP/1.0 200 OK\r\n");
+  sprintf(buf, "%sServer: Naive Http Server\r\n", buf);
+  sprintf(buf, "%sConnection: close\r\n", buf);
+  sprintf(buf, "%sContent-length: %d\r\n", buf, filesize);
+  sprintf(buf, "%sContent-type: %s\r\n\r\n", buf, filetype);
+  Rio_writen(fd, buf, strlen(buf));
+  printf("Response headers:\n");
+  printf("%s", buf);
 
-//     // Return first part of HTTP response
-//     sprintf(buf, "HTTP/1.0 200 OK\r\n"); 
-//     Rio_writen(fd, buf, strlen(buf));
-//     sprintf(buf, "Server: Naive Web Server\r\n");
-//     Rio_writen(fd, buf, strlen(buf));
-  
-//     if (Fork() == 0) { 
-//         // Child
-// 	    // Real server would set all CGI vars here
-// 	    setenv("QUERY_STRING", cgiargs, 1);
-// 	    Dup2(fd, STDOUT_FILENO);                // Redirect stdout to client
-// 	    Execve(filename, emptylist, environ);   // Run CGI program
-//     }
-//     Wait(NULL); // Parent waits for and reaps child
-// }
+  // Send response body to client
+  srcfd = Open(filename, O_RDONLY, 0);
+  srcp = Mmap(0, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0);
+  Close(srcfd);
+  Rio_writen(fd, srcp, filesize);
+  Munmap(srcp, filesize);
+}
