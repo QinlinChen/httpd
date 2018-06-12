@@ -18,6 +18,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <pthread.h>
 
 /* --------------------------------------------------
                     socket utilities
