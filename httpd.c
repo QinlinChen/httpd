@@ -17,7 +17,7 @@ void app_error(const char *format, ...);
 int main(int argc, char *argv[]) {
   int opt;
 
-  app_error("hello, %s, %d", "ab", 123);
+  app_error("hello, %s, %d\n", "ab", 123);
   /* initialize global */
   G.port = 0;
   G.site = NULL;
@@ -43,7 +43,7 @@ int main(int argc, char *argv[]) {
 	} 
 
   if (G.port == 0)
-    show_usage(argv);
+    show_usage(argv[0]);
   
   if (optind >= argc) {
     fprintf(stderr, "Expected argument after options\n");
