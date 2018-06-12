@@ -213,6 +213,7 @@ int main(int argc, char *argv[]) {
     if ((rc = getnameinfo((SA *)&clientaddr, clientlen, hostname, MAXLINE,
                           port, MAXLINE, 0)) != 0) {
       gai_error(rc, "Getnameinfo error");
+      exit(1);
     }
 
     printf("Accepted connection from (%s, %s)\n", hostname, port);
