@@ -381,7 +381,7 @@ void get_filetype(char *filename, char *filetype);
 void serve_static(int fd, char *filename, int filesize);
 
 int main(int argc, char *argv[]) {
-  int opt, rc, listenfd, connfd;
+  int opt, listenfd, connfd;
   char hostname[MAXLINE], port[MAXLINE];
   struct sockaddr_in clientaddr;
   socklen_t clientlen;
