@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <unistd.h>
 #include <getopt.h>
+#include <stdarg.h>
 
 struct {
   int port;
@@ -11,14 +12,21 @@ struct {
 } G;
 
 void show_usage(const char *name);
+void app_error(const char *format, ...);
 
 int main(int argc, char *argv[]) {
   int opt;
 
+  app_error("hello, %s, %d", "ab", 123);
+  /* initialize global */
+  G.port = 0;
+  G.site = NULL;
+
+  /* process args */
   while (1) {
 		static const char *optstring = "p:h";
 		static const struct option longopts[] = {
-			{ "port", no_argument, NULL, 'p' },
+			{ "port", required_argument, NULL, 'p' },
 			{ "help", no_argument, NULL, 'h' },
 			{ NULL, no_argument, NULL, 0 }
 		};
@@ -34,6 +42,9 @@ int main(int argc, char *argv[]) {
 		}	
 	} 
 
+  if (G.port == 0)
+    show_usage(argv);
+  
   if (optind >= argc) {
     fprintf(stderr, "Expected argument after options\n");
     exit(1);
@@ -50,4 +61,11 @@ void show_usage(const char *name) {
     printf("Usage: %s [-p, --show-pids] "
 		"[-n, --numeric-sort] [-V, --version]\n", name);
     exit(1);
+}
+
+void app_error(const char *format, ...) {
+  va_list ap;
+  va_start(ap, format);
+  vfprintf(stderr, format, ap);
+  va_end(ap);
 }
