@@ -430,7 +430,7 @@ int main(int argc, char *argv[]) {
     doit(connfd);
     Close(connfd);
   }
-  
+
   return 0;
 }
 
@@ -520,10 +520,22 @@ void read_requesthdrs(rio_t *rp) {
 }
 
 int parse_uri(char *uri, char *filename) {
-  strcpy(filename, G.site);
+  struct stat sbuf;
+
+  if (strcmp(G.site, "/") == 0)
+    strcpy(filename, "");
+  else
+    strcpy(filename, G.site);
   strcat(filename, uri);
+  
   if (uri[strlen(uri) - 1] == '/')
     strcat(filename, "index.html");
+  else {
+    if (stat(filename, &sbuf) < 0)
+      return -1;
+    if (S_ISDIR(sbuf.st_mode))
+      strcat(filename, "/index.html");
+  }
   return 0;
 }
 
