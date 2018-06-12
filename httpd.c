@@ -108,28 +108,25 @@ ssize_t	rio_readlineb(rio_t *rp, void *usrbuf, size_t maxlen);
 
 void unix_error(char *msg);
 void posix_error(int code, char *msg);
-void dns_error(char *msg);
 void gai_error(int code, char *msg);
 void app_error(const char *format, ...);
 
  /* Unix-style error */
 void unix_error(char *msg) {
   fprintf(stderr, "%s: %s\n", msg, strerror(errno));
-  exit(0);
 }
 
 /* Posix-style error */
 void posix_error(int code, char *msg) {
   fprintf(stderr, "%s: %s\n", msg, strerror(code));
-  exit(0);
 }
 
 /* Getaddrinfo-style error */
 void gai_error(int code, char *msg) {
   fprintf(stderr, "%s: %s\n", msg, gai_strerror(code));
-  exit(0);
 }
 
+/* Application error */
 void app_error(const char *format, ...) {
   va_list ap;
   va_start(ap, format);
@@ -199,7 +196,7 @@ int main(int argc, char *argv[]) {
   /* run */
   printf("Httpd is running. (port=%s, site=%s)\n", G.port, G.site);
 
-  int listenfd, connfd;
+  int listenfd, connfd, rc;
   char hostname[MAXLINE], port[MAXLINE];
   struct sockaddr_in clientaddr;
   socklen_t clientlen;
@@ -207,8 +204,17 @@ int main(int argc, char *argv[]) {
   listenfd = open_listenfd(G.port);
   while (1) {
     clientlen = sizeof(clientaddr);
-    connfd = accept(listenfd, (SA *)&clientaddr, &clientlen);
-    getnameinfo((SA *)&clientaddr, clientlen, hostname, MAXLINE, port, MAXLINE, 0);
+    
+    if (connfd = accept(listenfd, (SA *)&clientaddr, &clientlen) < 0) {
+      unix_error("Accept error");
+      exit(1);
+    }
+
+    if ((rc = getnameinfo((SA *)&clientaddr, clientlen, hostname, MAXLINE,
+                          port, MAXLINE, 0)) != 0) {
+      gai_error(rc, "Getnameinfo error");
+    }
+
     printf("Accepted connection from (%s, %s)\n", hostname, port);
     //doit(connfd);
     close(connfd);
