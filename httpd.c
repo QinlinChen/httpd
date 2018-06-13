@@ -411,9 +411,9 @@ int main(int argc, char *argv[]) {
   /* initialize global */
   G.port = NULL;
   G.site = NULL;
-  G.listenfd = 0;
+  G.listenfd = -1;
   G.connfd = -1;
-  
+
   /* initialize signal handle */
   signal(SIGINT, sigint_handle);
 
@@ -613,8 +613,8 @@ void serve_static(int fd, char *filename, int filesize) {
 }
 
 void release_resource() {
-  Close(G.connfd);
-  Close(G.listenfd);
+  close(G.connfd);
+  close(G.listenfd);
   free(G.port);
   free(G.site);
 }
