@@ -380,6 +380,7 @@ struct {
   char *port;
   char *site;
   int listenfd;
+  int connfd;
 } G;
 
 void show_usage(const char *name);
@@ -391,10 +392,17 @@ void read_requesthdrs(rio_t *rp);
 int parse_uri(char *uri, char *filename);
 void get_filetype(char *filename, char *filetype);
 void serve_static(int fd, char *filename, int filesize);
-void sigint_handle(int signum);
+void release_resource();
+
+void sigint_handle(int signum) {
+  assert(signum == SIGINT);
+  release_resource();
+  printf("Httpd is shut down\n");
+  exit(0);
+}
 
 int main(int argc, char *argv[]) {
-  int opt, connfd;
+  int opt;
   char hostname[MAXLINE], port[MAXLINE];
   struct sockaddr_in clientaddr;
   socklen_t clientlen;
@@ -441,11 +449,11 @@ int main(int argc, char *argv[]) {
   G.listenfd = Open_listenfd(G.port);
   while (1) {
     clientlen = sizeof(clientaddr);
-    connfd = Accept(G.listenfd, (SA *)&clientaddr, &clientlen);
+    G.connfd = Accept(G.listenfd, (SA *)&clientaddr, &clientlen);
     Getnameinfo((SA *)&clientaddr, clientlen, hostname, MAXLINE, port, MAXLINE, 0);
     log("Accepted connection from (%s, %s)\n", hostname, port);
-    doit(connfd);
-    Close(connfd);
+    doit(G.connfd);
+    Close(G.connfd);
   }
 
   return 0;
@@ -602,10 +610,9 @@ void serve_static(int fd, char *filename, int filesize) {
   Munmap(srcp, filesize);
 }
 
-void sigint_handle(int signum) {
+void release_resource() {
+  Close(G.connfd);
   Close(G.listenfd);
-  free(G.port);
-  free(G.site);
-  printf("Httpd is shut down\n");
-  exit(0);
+  Free(G.port);
+  Free(G.site);
 }
