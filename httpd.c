@@ -20,6 +20,7 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <semaphore.h>
+#include <assert.h>
 
 /* --------------------------------------------------
                     socket utilities
@@ -613,6 +614,6 @@ void serve_static(int fd, char *filename, int filesize) {
 void release_resource() {
   Close(G.connfd);
   Close(G.listenfd);
-  Free(G.port);
-  Free(G.site);
+  free(G.port);
+  free(G.site);
 }
