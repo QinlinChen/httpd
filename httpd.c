@@ -419,24 +419,23 @@ int main(int argc, char *argv[]) {
 
   /* process args */
   while (1) {
-		static const char *optstring = "p:h";
-		static const struct option longopts[] = {
-			{ "port", required_argument, NULL, 'p' },
-			{ "help", no_argument, NULL, 'h' },
-			{ NULL, no_argument, NULL, 0 }
-		};
+    static const char *optstring = "p:h";
+    static const struct option longopts[] = {
+        {"port", required_argument, NULL, 'p'},
+        {"help", no_argument, NULL, 'h'},
+        {NULL, no_argument, NULL, 0}};
 
-		opt = getopt_long(argc, argv, optstring, longopts, NULL);
-		if (opt == -1)
-			break;
-		
-		switch (opt) {
-			case 'p': G.port = strdup(optarg); break;
-      case 'h':
-			/* 0, ?, etc. */
-			default: show_usage(argv[0]);
-		}	
-	} 
+    opt = getopt_long(argc, argv, optstring, longopts, NULL);
+    if (opt == -1)
+      break;
+
+    switch (opt) {
+    case 'p': G.port = strdup(optarg); break;
+    case 'h':
+    /* 0, ?, etc. */
+    default: show_usage(argv[0]);
+    }
+  }
 
   /* handle illegal input */
   if (G.port == NULL)
