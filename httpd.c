@@ -369,6 +369,7 @@ void Munmap(void *start, size_t length) {
 struct {
   char *port;
   char *site;
+  int listenfd;
 } G;
 
 void show_usage(const char *name);
@@ -383,7 +384,7 @@ void serve_static(int fd, char *filename, int filesize);
 void sigint_handle(int signum);
 
 int main(int argc, char *argv[]) {
-  int opt, listenfd, connfd;
+  int opt, connfd;
   char hostname[MAXLINE], port[MAXLINE];
   struct sockaddr_in clientaddr;
   socklen_t clientlen;
@@ -426,10 +427,10 @@ int main(int argc, char *argv[]) {
 
   /* run */
   printf("Httpd is starting. (port=%s, site=%s)\n", G.port, G.site);
-  listenfd = Open_listenfd(G.port);
+  G.listenfd = Open_listenfd(G.port);
   while (1) {
     clientlen = sizeof(clientaddr);
-    connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen);
+    connfd = Accept(G.listenfd, (SA *)&clientaddr, &clientlen);
     Getnameinfo((SA *)&clientaddr, clientlen, hostname, MAXLINE, port, MAXLINE, 0);
     printf("Accepted connection from (%s, %s)\n", hostname, port);
     doit(connfd);
@@ -591,6 +592,7 @@ void serve_static(int fd, char *filename, int filesize) {
 }
 
 void sigint_handle(int signum) {
+  Close(G.listenfd);
   printf("Httpd is shut down\n");
   exit(0);
 }
