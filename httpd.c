@@ -412,7 +412,8 @@ int main(int argc, char *argv[]) {
   G.port = NULL;
   G.site = NULL;
   G.listenfd = 0;
-
+  G.connfd = -1;
+  
   /* initialize signal handle */
   signal(SIGINT, sigint_handle);
 
