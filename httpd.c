@@ -19,6 +19,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <pthread.h>
+#include <semaphore.h>
 
 /* --------------------------------------------------
                     socket utilities
@@ -392,6 +393,7 @@ int main(int argc, char *argv[]) {
   /* initialize global */
   G.port = NULL;
   G.site = NULL;
+  G.listenfd = 0;
 
   /* initialize signal handle */
   signal(SIGINT, sigint_handle);
@@ -593,6 +595,8 @@ void serve_static(int fd, char *filename, int filesize) {
 
 void sigint_handle(int signum) {
   Close(G.listenfd);
+  free(G.port);
+  free(G.site);
   printf("Httpd is shut down\n");
   exit(0);
 }
