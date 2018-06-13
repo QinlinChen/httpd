@@ -367,6 +367,15 @@ void Munmap(void *start, size_t length) {
                         httpd
   --------------------------------------------------- */
 
+#ifdef LOG
+  #define log(format, ...) \
+    do { \
+      printf(format, ## __VA_ARGS__); \
+    } while (0)
+#else 
+  #define log(format, ...) ((void)0)
+#endif
+
 struct {
   char *port;
   char *site;
@@ -434,7 +443,7 @@ int main(int argc, char *argv[]) {
     clientlen = sizeof(clientaddr);
     connfd = Accept(G.listenfd, (SA *)&clientaddr, &clientlen);
     Getnameinfo((SA *)&clientaddr, clientlen, hostname, MAXLINE, port, MAXLINE, 0);
-    printf("Accepted connection from (%s, %s)\n", hostname, port);
+    log("Accepted connection from (%s, %s)\n", hostname, port);
     doit(connfd);
     Close(connfd);
   }
@@ -462,7 +471,7 @@ void doit(int fd) {
   Rio_readinitb(&rio, fd);
   if (!Rio_readlineb(&rio, buf, MAXLINE))
     return;
-  printf("%s", buf);
+  log("%s", buf);
   sscanf(buf, "%s %s %s", method, uri, version);
   if (strcasecmp(method, "GET")) {
     clienterror(fd, method, "501", "Not Implemented",
@@ -505,13 +514,13 @@ void clienterror(int fd, const char *cause, const char *errnum,
   // Print the HTTP response
   sprintf(buf, "HTTP/1.0 %s %s\r\n", errnum, shortmsg);
   Rio_writen(fd, buf, strlen(buf));
-  printf("%s", buf);
+  log("%s", buf);
   sprintf(buf, "Content-type: text/html\r\n");
   Rio_writen(fd, buf, strlen(buf));
-  printf("%s", buf);
+  log("%s", buf);
   sprintf(buf, "Content-length: %d\r\n\r\n", (int)strlen(body));
   Rio_writen(fd, buf, strlen(buf));
-  printf("%s", buf);
+  log("%s", buf);
   Rio_writen(fd, body, strlen(body));
 }
 
@@ -520,10 +529,10 @@ void read_requesthdrs(rio_t *rp) {
 
   // skip request headers
   Rio_readlineb(rp, buf, MAXLINE);
-  printf("%s", buf);
+  log("%s", buf);
   while (strcmp(buf, "\r\n")) {
     Rio_readlineb(rp, buf, MAXLINE);
-    printf("%s", buf);
+    log("%s", buf);
   }
 }
 
@@ -582,8 +591,8 @@ void serve_static(int fd, char *filename, int filesize) {
   sprintf(buf, "%sContent-length: %d\r\n", buf, filesize);
   sprintf(buf, "%sContent-type: %s\r\n\r\n", buf, filetype);
   Rio_writen(fd, buf, strlen(buf));
-  printf("Response headers:\n");
-  printf("%s", buf);
+  log("Response headers:\n");
+  log("%s", buf);
 
   // Send response body to client
   srcfd = Open(filename, O_RDONLY, 0);
