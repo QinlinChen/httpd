@@ -1,7 +1,7 @@
 # httpd
 
 This is a httpd server.
-It has a multi-thread version on branch `multi-thread`.
+It has a multi-thread version on branch `multithread`.
 However, it cannot be shutdown gracefully.
 
 ## Build
