@@ -1,9 +1,18 @@
-BIN = httpd
+TARG = httpd
+OBJ = httpd.o http-utils.o
+COMPILER = gcc
+CFLAGS = -g -O2 -Wall
 
-.PHONY: build clean
+TARG: $(OBJ)
+	$(COMPILER) $(CFLAGS) -o $(TARG) $(OBJ) -lpthread
+	
+run: TARG
+	./$(TARG) -p 8080 ./site
 
-build: $(BIN).c
-	gcc -std=gnu99 -O1 -Wall -o $(BIN) $(BIN).c
+.PHONY: clean cleanobj
 
-clean:
-	rm $(BIN)
+clean: cleanobj
+	rm $(TARG)
+
+cleanobj:
+	rm $(OBJ)
