@@ -6,7 +6,6 @@
 #include <string.h>
 #include <strings.h>
 #include <unistd.h>
-#include <signal.h>
 #include <getopt.h>
 #include <fcntl.h>
 #include <sys/types.h>
@@ -15,15 +14,14 @@
 #include <errno.h>
 #include <assert.h>
 
+#include <signal.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <netinet/in.h>
-#include <pthread.h>
 
 #include "rio.h"
 #include "error.h"
 #include "http-utils.h"
-#include "queue.h"
 
 #define LOG
 #ifdef LOG
@@ -38,16 +36,17 @@
 #define	MAXLINE	 4096  /* Max text line length */
 #define MAXBUF   8192  /* Max I/O buffer size */
 
-static const char * httpd_name = "The Naive HTTP Server";
+static const char *httpd_name = "The Naive HTTP Server";
 static char *site;
 static int listenfd;
 static int connfd;
 
 void show_usage(const char *name);
 void normalize_dir(char *dir);
-void doit(int fd);
+void run(int listenfd);
+void doit(int connfd);
 void clienterror(int fd, const char *cause, const char *errnum,
-                                 const char *shortmsg, const char *longmsg);
+                 const char *shortmsg, const char *longmsg);
 void read_requesthdrs(rio_t *rp);
 int parse_uri(char *uri, char *filename);
 void get_filetype(char *filename, char *filetype);
@@ -55,35 +54,13 @@ void serve_static(int fd, char *filename, int filesize);
 void release_resource();
 
 typedef void (*sigfunc_t)(int);
-
-sigfunc_t signal_intr(int signo, sigfunc_t func) {
-	struct sigaction act, oact;
-
-	act.sa_handler = func;
-	sigemptyset(&act.sa_mask);
-	act.sa_flags = 0;
-#ifdef	SA_INTERRUPT
-	act.sa_flags |= SA_INTERRUPT;
-#endif
-	if (sigaction(signo, &act, &oact) < 0)
-		return SIG_ERR;
-	return oact.sa_handler;
-}
-
-void sigint_handle(int signum) {
-    assert(signum == SIGINT);
-    release_resource();
-    printf("\nHttpd is shut down\n");
-    exit(0);
-}
+sigfunc_t signal_intr(int signo, sigfunc_t func);
+void sigint_handle(int signum);
 
 int main(int argc, char *argv[]) {
-    int opt, rc;
+    int opt;
     char *port;
-    char cli_hostname[MAXLINE], cli_port[MAXLINE];
-    struct sockaddr_in cli_addr;
-    socklen_t cli_len;
-
+    
     /* Initialize variables. */
     port = NULL;
     site = NULL;
@@ -122,11 +99,55 @@ int main(int argc, char *argv[]) {
     site = strdup(argv[optind]);
     normalize_dir(site);
 
+    /* open socket and listen */
     if ((listenfd = open_listenfd(port)) < 0)
         unix_errq("open_listenfd error");
 
     /* Run! */
-    printf("Httpd is starting. (port=%s, site=%s)\n", port, site);
+    printf("Httpd is running. (port=%s, site=%s)\n", port, site);
+    run(listenfd);
+
+    return 0;
+}
+
+sigfunc_t signal_intr(int signo, sigfunc_t func) {
+	struct sigaction act, oact;
+
+	act.sa_handler = func;
+	sigemptyset(&act.sa_mask);
+	act.sa_flags = 0;
+#ifdef	SA_INTERRUPT
+	act.sa_flags |= SA_INTERRUPT;
+#endif
+	if (sigaction(signo, &act, &oact) < 0)
+		return SIG_ERR;
+	return oact.sa_handler;
+}
+
+void sigint_handle(int signum) {
+    assert(signum == SIGINT);
+    release_resource();
+    printf("\nHttpd is shut down\n");
+    exit(0);
+}
+
+void show_usage(const char *name) {
+    printf("Usage: %s [-h, --help] <-p, --port PORT> DIR\n", name);
+    exit(1);
+}
+
+void normalize_dir(char *dir) {
+    int len = strlen(dir);
+    if (len != 1 && dir[len - 1] == '/')
+        dir[len - 1] = '\0';
+}
+
+void run(int listenfd) {
+    int rc;
+    char cli_hostname[MAXLINE], cli_port[MAXLINE];
+    struct sockaddr_in cli_addr;
+    socklen_t cli_len;
+
     while (1) {
         cli_len = sizeof(cli_addr);
         if ((connfd = accept(listenfd, (struct sockaddr *)&cli_addr, &cli_len)) < 0)
@@ -142,29 +163,16 @@ int main(int argc, char *argv[]) {
         if (close(connfd) != 0)
             unix_errq("close error");
     }
-
-    return 0;
 }
 
-void show_usage(const char *name) {
-    printf("Usage: %s [-h, --help] <-p, --port PORT> DIR\n", name);
-    exit(1);
-}
-
-void normalize_dir(char *dir) {
-    int len = strlen(dir);
-    if (len != 1 && dir[len - 1] == '/')
-        dir[len - 1] = '\0';
-}
-
-void doit(int fd) {
+void doit(int connfd) {
     char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], version[MAXLINE];
     char filename[MAXLINE];
     struct stat sbuf;
     rio_t rio;
     ssize_t nread;
 
-    rio_readinitb(&rio, fd);
+    rio_readinitb(&rio, connfd);
     /* Read method, uri, version. */
     if ((nread = rio_readlineb(&rio, buf, MAXLINE)) <= 0) {
         if (nread == 0)
@@ -176,7 +184,7 @@ void doit(int fd) {
 
     /* Check method. */
     if (strcasecmp(method, "GET")) {    /* We only support GET method*/
-        clienterror(fd, method, "501", "Not Implemented",
+        clienterror(connfd, method, "501", "Not Implemented",
                     "We haven't implemented this method");
         return;
     }
@@ -186,26 +194,26 @@ void doit(int fd) {
 
     /* Parse uri to local filename. */
     if (parse_uri(uri, filename) != 0) {
-        clienterror(fd, filename, "404", "Not Found",
+        clienterror(connfd, filename, "404", "Not Found",
                     "We couldn't find this file");
         return;
     }
 
     /* Check existence. */
     if (stat(filename, &sbuf) < 0) {
-        clienterror(fd, filename, "404", "Not Found",
+        clienterror(connfd, filename, "404", "Not Found",
                     "We couldn't find this file");
         return;
     }
     
     /* Check permission. */
     if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) {
-        clienterror(fd, filename, "403", "Forbidden",
+        clienterror(connfd, filename, "403", "Forbidden",
                     "We couldn't read the file");
         return;
     }
 
-    serve_static(fd, filename, sbuf.st_size);
+    serve_static(connfd, filename, sbuf.st_size);
 }
 
 void clienterror(int fd, const char *cause, const char *errnum,
