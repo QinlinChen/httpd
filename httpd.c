@@ -180,7 +180,7 @@ void run(int listenfd) {
                     unix_errq("getnameinfo error: %s", gai_strerror(rc));
 
                 log("Accepted connection from (%s, %s)\n", cli_hostname, cli_port);
-                log("connfd: %d\n\n", connfd);
+                printf("connfd: %d\n\n", connfd);
                 ev.events = EPOLLIN;
                 ev.data.fd = connfd;
                 if (epoll_ctl(epollfd, EPOLL_CTL_ADD, connfd, &ev) == -1)
@@ -188,7 +188,7 @@ void run(int listenfd) {
             }
             else if (events[i].events & EPOLLIN) {
                 doit(events[i].data.fd);
-                log("close connfd %d\n\n", events[i].data.fd);
+                printf("close connfd %d\n\n", events[i].data.fd);
                 close(events[i].data.fd);
             }
             else {  /* Should not reach here. */
