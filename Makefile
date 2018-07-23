@@ -1,5 +1,5 @@
 TARG = httpd
-OBJ = httpd.o http-utils.o
+OBJ = httpd.o http-utils.o rio.o error.o
 COMPILER = gcc
 CFLAGS = -g -O2 -Wall
 
