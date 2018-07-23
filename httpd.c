@@ -24,7 +24,6 @@
 #include "error.h"
 #include "http-utils.h"
 
-#define LOG
 #ifdef LOG
     #define log(format, ...) \
         do { \
@@ -188,11 +187,9 @@ void run(int listenfd) {
                     unix_errq("epoll_ctl error");
             }
             else if (events[i].events & EPOLLIN) {
-                rc = doit(events[i].data.fd);
-                if (rc == -1) {/* Connfd has been closed by peer. */
-                    log("close connfd %d\n\n", events[i].data.fd);
-                    close(events[i].data.fd);
-                }
+                doit(events[i].data.fd);
+                log("close connfd %d\n\n", events[i].data.fd);
+                close(events[i].data.fd);
             }
             else {  /* Should not reach here. */
                 assert(0);
