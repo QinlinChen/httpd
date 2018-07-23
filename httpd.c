@@ -18,6 +18,7 @@
 #include <sys/socket.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <sys/epoll.h>
 
 #include "rio.h"
 #include "error.h"
@@ -35,8 +36,10 @@
 
 #define	MAXLINE	 4096  /* Max text line length */
 #define MAXBUF   8192  /* Max I/O buffer size */
+#define MAXEVENTS 1024
 
 static const char *httpd_name = "The Naive HTTP Server";
+static sig_atomic_t termflag = 0;
 static char *site;
 static int listenfd;
 static int connfd;
@@ -44,7 +47,7 @@ static int connfd;
 void show_usage(const char *name);
 void normalize_dir(char *dir);
 void run(int listenfd);
-void doit(int connfd);
+int doit(int connfd);
 void clienterror(int fd, const char *cause, const char *errnum,
                  const char *shortmsg, const char *longmsg);
 void read_requesthdrs(rio_t *rp);
@@ -106,7 +109,9 @@ int main(int argc, char *argv[]) {
     /* Run! */
     printf("Httpd is running. (port=%s, site=%s)\n", port, site);
     run(listenfd);
-
+    
+    close(listenfd);
+    printf("\nHttpd is shut down\n");
     return 0;
 }
 
@@ -126,9 +131,7 @@ sigfunc_t signal_intr(int signo, sigfunc_t func) {
 
 void sigint_handle(int signum) {
     assert(signum == SIGINT);
-    release_resource();
-    printf("\nHttpd is shut down\n");
-    exit(0);
+    termflag = 1;
 }
 
 void show_usage(const char *name) {
@@ -143,29 +146,65 @@ void normalize_dir(char *dir) {
 }
 
 void run(int listenfd) {
-    int rc;
+    int rc, epollfd, nfds, i;
     char cli_hostname[MAXLINE], cli_port[MAXLINE];
     struct sockaddr_in cli_addr;
     socklen_t cli_len;
+    struct epoll_event ev, events[MAXEVENTS];
 
-    while (1) {
-        cli_len = sizeof(cli_addr);
-        if ((connfd = accept(listenfd, (struct sockaddr *)&cli_addr, &cli_len)) < 0)
-            unix_errq("accept error");
-        if ((rc = getnameinfo((struct sockaddr *)&cli_addr, cli_len, 
-            cli_hostname, MAXLINE, cli_port, MAXLINE, 0)) != 0)
-            unix_errq("getnameinfo error: %s", gai_strerror(rc));
-        log("Accepted connection from (%s, %s)\n", cli_hostname, cli_port);
+    if ((epollfd = epoll_create1(0)) == -1)
+        unix_errq("epoll_create1 error");
+    
+    ev.events = EPOLLIN;
+    ev.data.fd = listenfd;
+    if (epoll_ctl(epollfd, EPOLL_CTL_ADD, listenfd, &ev) == -1)
+        unix_errq("epoll_ctl error");
+    
+    while (!termflag) {
+        if ((nfds = epoll_wait(epollfd, events, MAXEVENTS, -1)) == -1) {
+            if (errno == EINTR) {
+                printf("interrupted from epoll wait\n");
+                break;
+            }
+            unix_errq("epoll_wait error");
+        }
+        
+        for (i = 0; i < nfds; ++i) {
+            if (events[i].data.fd == listenfd) {
+                cli_len = sizeof(cli_addr);
+                if ((connfd = accept(listenfd, 
+                              (struct sockaddr *)&cli_addr, &cli_len)) < 0)
+                    unix_errq("accept error");
+                
+                if ((rc = getnameinfo((struct sockaddr *)&cli_addr, cli_len, 
+                          cli_hostname, MAXLINE, cli_port, MAXLINE, 0)) != 0)
+                    unix_errq("getnameinfo error: %s", gai_strerror(rc));
 
-        /* serve connfd */
-        doit(connfd);
-
-        if (close(connfd) != 0)
-            unix_errq("close error");
+                log("Accepted connection from (%s, %s)\n", cli_hostname, cli_port);
+                log("connfd: %d\n\n", connfd);
+                ev.events = EPOLLIN;
+                ev.data.fd = connfd;
+                if (epoll_ctl(epollfd, EPOLL_CTL_ADD, connfd, &ev) == -1)
+                    unix_errq("epoll_ctl error");
+            }
+            else if (events[i].events & EPOLLIN) {
+                rc = doit(events[i].data.fd);
+                if (rc == -1) {/* Connfd has been closed by peer. */
+                    log("close connfd %d\n\n", events[i].data.fd);
+                    close(events[i].data.fd);
+                }
+            }
+            else {  /* Should not reach here. */
+                assert(0);
+            }
+        }
     }
+    
+    if (close(epollfd) != 0)
+        unix_errq("epoll close error");
 }
 
-void doit(int connfd) {
+int doit(int connfd) {
     char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], version[MAXLINE];
     char filename[MAXLINE];
     struct stat sbuf;
@@ -176,7 +215,7 @@ void doit(int connfd) {
     /* Read method, uri, version. */
     if ((nread = rio_readlineb(&rio, buf, MAXLINE)) <= 0) {
         if (nread == 0)
-            return;
+            return -1;
         unix_errq("rio_readlineb error");
     }
     sscanf(buf, "%s %s %s", method, uri, version);
@@ -186,7 +225,7 @@ void doit(int connfd) {
     if (strcasecmp(method, "GET")) {    /* We only support GET method*/
         clienterror(connfd, method, "501", "Not Implemented",
                     "We haven't implemented this method");
-        return;
+        return 0;
     }
 
     /* Read request headers and discard them. */
@@ -196,24 +235,25 @@ void doit(int connfd) {
     if (parse_uri(uri, filename) != 0) {
         clienterror(connfd, filename, "404", "Not Found",
                     "We couldn't find this file");
-        return;
+        return 0;
     }
 
     /* Check existence. */
     if (stat(filename, &sbuf) < 0) {
         clienterror(connfd, filename, "404", "Not Found",
                     "We couldn't find this file");
-        return;
+        return 0;
     }
     
     /* Check permission. */
     if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) {
         clienterror(connfd, filename, "403", "Forbidden",
                     "We couldn't read the file");
-        return;
+        return 0;
     }
 
     serve_static(connfd, filename, sbuf.st_size);
+    return 0;
 }
 
 void clienterror(int fd, const char *cause, const char *errnum,
