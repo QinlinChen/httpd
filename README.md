@@ -1,8 +1,6 @@
 # httpd
 
-This is a httpd server.
-It has a multi-thread version on branch `multithread`.
-However, it cannot be shutdown gracefully.
+This is a httpd server with `multithread` and `epoll` support.
 
 ## Build
 Just use `make`

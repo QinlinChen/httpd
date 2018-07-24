@@ -133,7 +133,7 @@ void sigint_handle(int signum) {
 }
 
 void show_usage(const char *name) {
-    printf("Usage: %s [-h, --help] <-p, --port PORT> DIR\n", name);
+    printf("Usage: %s [-p PORT, --port PORT] [-h, --help] DIR\n", name);
     exit(1);
 }
 
