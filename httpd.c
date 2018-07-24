@@ -114,17 +114,17 @@ int main(int argc, char *argv[]) {
 }
 
 sigfunc_t signal_intr(int signo, sigfunc_t func) {
-	struct sigaction act, oact;
+    struct sigaction act, oact;
 
-	act.sa_handler = func;
-	sigemptyset(&act.sa_mask);
-	act.sa_flags = 0;
+    act.sa_handler = func;
+    sigemptyset(&act.sa_mask);
+    act.sa_flags = 0;
 #ifdef	SA_INTERRUPT
-	act.sa_flags |= SA_INTERRUPT;
+    act.sa_flags |= SA_INTERRUPT;
 #endif
-	if (sigaction(signo, &act, &oact) < 0)
-		return SIG_ERR;
-	return oact.sa_handler;
+    if (sigaction(signo, &act, &oact) < 0)
+        return SIG_ERR;
+    return oact.sa_handler;
 }
 
 void sigint_handle(int signum) {
