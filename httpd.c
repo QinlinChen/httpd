@@ -24,6 +24,7 @@
 #include "error.h"
 #include "http-utils.h"
 
+// #define LOG
 #ifdef LOG
     #define log(format, ...) \
         do { \
@@ -39,13 +40,12 @@
 
 static const char *httpd_name = "The Naive HTTP Server";
 static sig_atomic_t termflag = 0;
-static char *site;
-static int listenfd;
-static int connfd;
+static char *workdir;
 
 void show_usage(const char *name);
 void normalize_dir(char *dir);
-void run(int listenfd);
+
+void httpd_run(const char *port);
 int doit(int connfd);
 void clienterror(int fd, const char *cause, const char *errnum,
                  const char *shortmsg, const char *longmsg);
@@ -53,7 +53,6 @@ void read_requesthdrs(rio_t *rp);
 int parse_uri(char *uri, char *filename);
 void get_filetype(char *filename, char *filetype);
 void serve_static(int fd, char *filename, int filesize);
-void release_resource();
 
 typedef void (*sigfunc_t)(int);
 sigfunc_t signal_intr(int signo, sigfunc_t func);
@@ -65,9 +64,7 @@ int main(int argc, char *argv[]) {
     
     /* Initialize variables. */
     port = NULL;
-    site = NULL;
-    listenfd = -1;
-    connfd = -1;
+    workdir = NULL;
 
     /* Initialize signal handle. */
     if (signal_intr(SIGINT, sigint_handle) == SIG_ERR)
@@ -98,18 +95,13 @@ int main(int argc, char *argv[]) {
         show_usage(argv[0]);
     if (optind >= argc)
         app_errq("Expected argument after options");
-    site = strdup(argv[optind]);
-    normalize_dir(site);
-
-    /* open socket and listen */
-    if ((listenfd = open_listenfd(port)) < 0)
-        unix_errq("open_listenfd error");
+    workdir = strdup(argv[optind]);
+    normalize_dir(workdir);
 
     /* Run! */
-    printf("Httpd is running. (port=%s, site=%s)\n", port, site);
-    run(listenfd);
+    httpd_run(port);
     
-    close(listenfd);
+    free(workdir);
     printf("\nHttpd is shut down\n");
     return 0;
 }
@@ -144,59 +136,74 @@ void normalize_dir(char *dir) {
         dir[len - 1] = '\0';
 }
 
-void run(int listenfd) {
-    int rc, epollfd, nfds, i;
+void httpd_run(const char *port) {
+    int i, rc, listenfd, connfd, epollfd, nfds;
     char cli_hostname[MAXLINE], cli_port[MAXLINE];
     struct sockaddr_in cli_addr;
     socklen_t cli_len;
     struct epoll_event ev, events[MAXEVENTS];
 
+    /* Open socket and listen. */
+    if ((listenfd = open_listenfd(port)) < 0)
+        unix_errq("open_listenfd error");
+    
+    /* Create epoll and add listenfd in. */
     if ((epollfd = epoll_create1(0)) == -1)
         unix_errq("epoll_create1 error");
-    
     ev.events = EPOLLIN;
     ev.data.fd = listenfd;
     if (epoll_ctl(epollfd, EPOLL_CTL_ADD, listenfd, &ev) == -1)
-        unix_errq("epoll_ctl error");
+        unix_errq("epoll_ctl add error");
     
+    /* Loop until sigint_handle set termflag. */
+    printf("Httpd is running. (port=%s, workdir=%s)\n", port, workdir);
     while (!termflag) {
         if ((nfds = epoll_wait(epollfd, events, MAXEVENTS, -1)) == -1) {
             if (errno == EINTR) {
-                printf("interrupted from epoll wait\n");
+                printf("\ninterrupted from epoll wait\n");
                 break;
             }
             unix_errq("epoll_wait error");
         }
         
         for (i = 0; i < nfds; ++i) {
+            /* Listenfd is ready to accept. */
             if (events[i].data.fd == listenfd) {
                 cli_len = sizeof(cli_addr);
-                if ((connfd = accept(listenfd, 
-                              (struct sockaddr *)&cli_addr, &cli_len)) < 0)
+                if ((connfd = accept(listenfd, (struct sockaddr *)&cli_addr,
+                                     &cli_len)) < 0)
                     unix_errq("accept error");
-                
-                if ((rc = getnameinfo((struct sockaddr *)&cli_addr, cli_len, 
-                          cli_hostname, MAXLINE, cli_port, MAXLINE, 0)) != 0)
+                if ((rc = getnameinfo((struct sockaddr *)&cli_addr, cli_len,
+                                      cli_hostname, MAXLINE,
+                                      cli_port, MAXLINE, 0)) != 0)
                     unix_errq("getnameinfo error: %s", gai_strerror(rc));
-
                 log("Accepted connection from (%s, %s)\n", cli_hostname, cli_port);
                 log("connfd: %d\n\n", connfd);
+
                 ev.events = EPOLLIN;
                 ev.data.fd = connfd;
                 if (epoll_ctl(epollfd, EPOLL_CTL_ADD, connfd, &ev) == -1)
                     unix_errq("epoll_ctl error");
             }
+            /* Connfd is ready to serve */
             else if (events[i].events & EPOLLIN) {
-                doit(events[i].data.fd);
-                log("close connfd %d\n\n", events[i].data.fd);
-                close(events[i].data.fd);
+                connfd = events[i].data.fd;
+                doit(connfd);
+                if (epoll_ctl(epollfd, EPOLL_CTL_DEL, connfd, &ev) == -1)
+                    unix_errq("epoll_ctl error");
+                if (close(connfd) != 0)
+                    unix_errq("close connfd error");
+                log("close connfd %d\n\n", connfd);
             }
-            else {  /* Should not reach here. */
+            /* Should not reach here. */
+            else {  
                 assert(0);
             }
         }
     }
     
+    if (close(listenfd) != 0)
+        unix_errq("close listenfd error");
     if (close(epollfd) != 0)
         unix_errq("epoll close error");
 }
@@ -294,10 +301,10 @@ void read_requesthdrs(rio_t *rp) {
 int parse_uri(char *uri, char *filename) {
     struct stat sbuf;
 
-    if (strcmp(site, "/") == 0)
+    if (strcmp(workdir, "/") == 0)
         strcpy(filename, "");
     else
-        strcpy(filename, site);
+        strcpy(filename, workdir);
     strcat(filename, uri);
     
     if (uri[strlen(uri) - 1] == '/')
@@ -360,10 +367,4 @@ void serve_static(int fd, char *filename, int filesize) {
         unix_errq("rio_writen error");
     if (munmap(srcp, filesize) != 0)
         unix_errq("munmap error");
-}
-
-void release_resource() {
-    close(connfd);
-    close(listenfd);
-    free(site);
 }
