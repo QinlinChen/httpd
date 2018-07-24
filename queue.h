@@ -1,3 +1,6 @@
+#ifndef _QUEUE_H
+#define _QUEUE_H
+
 #include <pthread.h>
 
 struct queue_node {
@@ -18,3 +21,5 @@ int queue_empty(queue_t *q);
 int queue_size(queue_t *q);
 int enqueue(queue_t *q, int item);
 int dequeue(queue_t *q, int *item);
+
+#endif
