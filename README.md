@@ -14,3 +14,6 @@ Here is an exemple
 	./httpd -p 8080 ./site
 
 `./site` is an example site in root directory.
+
+## TODO
+* Session control
