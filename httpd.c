@@ -30,7 +30,7 @@
         do { \
             printf(format, ## __VA_ARGS__); \
         } while (0)
-#else 
+#else
     #define log(format, ...) ((void)0)
 #endif
 
@@ -43,7 +43,7 @@ static const char *httpd_name = "The Naive HTTP Server";
 static char *workdir = NULL;
 
 /* Used to transfer connfd between the main thread and worker threads. */
-static queue_t fdq; 
+static queue_t fdq;
 static pthread_mutex_t worker_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t worker_cond = PTHREAD_COND_INITIALIZER;
 static sig_atomic_t termflag = 0;
@@ -107,7 +107,7 @@ int main(int argc, char *argv[]) {
 
     /* Run! */
     httpd_run(port);
-    
+
     free(workdir);
     printf("Httpd is shut down\n");
     return 0;
@@ -154,7 +154,7 @@ void httpd_run(const char *port) {
     /* Open socket and listen. */
     if ((listenfd = open_listenfd(port)) < 0)
         unix_errq("open_listenfd error");
-    
+
     /* Create epoll and add listenfd in. */
     if ((epollfd = epoll_create1(0)) == -1)
         unix_errq("epoll_create1 error");
@@ -162,7 +162,7 @@ void httpd_run(const char *port) {
     ev.data.fd = listenfd;
     if (epoll_ctl(epollfd, EPOLL_CTL_ADD, listenfd, &ev) == -1)
         unix_errq("epoll_ctl add error");
-    
+
     /* Create worker threads. */
     for (i = 0; i < NTHREADS; ++i) {
         if ((rc = pthread_create(&tids[i], NULL, worker_thread, NULL)) != 0)
@@ -179,7 +179,7 @@ void httpd_run(const char *port) {
             }
             unix_errq("epoll_wait error");
         }
-        
+
         for (i = 0; i < nfds; ++i) {
             /* Listenfd is ready to accept. */
             if (events[i].data.fd == listenfd) {
@@ -215,12 +215,12 @@ void httpd_run(const char *port) {
                 pthread_mutex_unlock(&worker_mutex);
             }
             /* Should not reach here. */
-            else {  
+            else {
                 assert(0);
             }
         }
     }
-    
+
     /* Notify all workers it's time to terminate. */
     pthread_mutex_lock(&worker_mutex);
     pthread_cond_broadcast(&worker_cond);
@@ -253,7 +253,7 @@ void *worker_thread(void *arg) {
         while (!termflag && queue_empty(&fdq))
             pthread_cond_wait(&worker_cond, &worker_mutex);
         if (termflag && queue_empty(&fdq)) {
-            /* 
+            /*
              * Termflag is set and we have served all connfd from fdq.
              * Now terminate.
              */
@@ -269,7 +269,7 @@ void *worker_thread(void *arg) {
         /* Serve connfd. */
         doit(connfd);
         if (close(connfd) != 0)
-            unix_errq("close connfd error");        
+            unix_errq("close connfd error");
     }
 
     return 0;
@@ -315,7 +315,7 @@ int doit(int connfd) {
                     "We couldn't find this file");
         return 0;
     }
-    
+
     /* Check permission. */
     if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) {
         clienterror(connfd, filename, "403", "Forbidden",
@@ -373,7 +373,7 @@ int parse_uri(char *uri, char *filename) {
     else
         strcpy(filename, workdir);
     strcat(filename, uri);
-    
+
     if (uri[strlen(uri) - 1] == '/')
         strcat(filename, "index.html");
     else {
