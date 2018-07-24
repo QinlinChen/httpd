@@ -35,18 +35,23 @@
     #define log(format, ...) ((void)0)
 #endif
 
-#define	MAXLINE	 4096  /* Max text line length */
-#define MAXBUF   8192  /* Max I/O buffer size */
-#define MAXEVENTS 1024
+#define	MAXLINE	    4096  /* Max text line length */
+#define MAXBUF      8192  /* Max I/O buffer size */
+#define MAXEVENTS   1024
+#define NTHREADS    4
 
 static const char *httpd_name = "The Naive HTTP Server";
 static sig_atomic_t termflag = 0;
-static char *workdir;
+static char *workdir = NULL;
+static pthread_mutex_t worker_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t worker_cond = PTHREAD_COND_INITIALIZER;
+static queue_t fdq;
 
 void show_usage(const char *name);
 void normalize_dir(char *dir);
 
 void httpd_run(const char *port);
+void *worker_thread(void *arg);
 int doit(int connfd);
 void clienterror(int fd, const char *cause, const char *errnum,
                  const char *shortmsg, const char *longmsg);
@@ -61,11 +66,11 @@ void sigint_handle(int signum);
 
 int main(int argc, char *argv[]) {
     int opt;
-    char *port;
-    
-    /* Initialize variables. */
-    port = NULL;
-    workdir = NULL;
+    char *port = NULL;
+
+    /* Initialize variables */
+    if (queue_init(&fdq) != 0)
+        unix_errq("queue_init error");
 
     /* Initialize signal handle. */
     if (signal_intr(SIGINT, sigint_handle) == SIG_ERR)
@@ -91,7 +96,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    /* Handle illegal input. */
+    /* Handle illegal arguments. */
     if (port == NULL)
         show_usage(argv[0]);
     if (optind >= argc)
@@ -103,7 +108,7 @@ int main(int argc, char *argv[]) {
     httpd_run(port);
     
     free(workdir);
-    printf("\nHttpd is shut down\n");
+    printf("Httpd is shut down\n");
     return 0;
 }
 
@@ -143,6 +148,7 @@ void httpd_run(const char *port) {
     struct sockaddr_in cli_addr;
     socklen_t cli_len;
     struct epoll_event ev, events[MAXEVENTS];
+    pthread_t tids[NTHREADS];
 
     /* Open socket and listen. */
     if ((listenfd = open_listenfd(port)) < 0)
@@ -156,6 +162,12 @@ void httpd_run(const char *port) {
     if (epoll_ctl(epollfd, EPOLL_CTL_ADD, listenfd, &ev) == -1)
         unix_errq("epoll_ctl add error");
     
+    /* Create worker threads */
+    for (i = 0; i < NTHREADS; ++i) {
+        if ((rc = pthread_create(&tids[i], NULL, worker_thread, NULL)) != 0)
+            posix_errq(rc, "pthread create error");
+    }
+
     /* Loop until sigint_handle set termflag. */
     printf("Httpd is running. (port=%s, workdir=%s)\n", port, workdir);
     while (!termflag) {
@@ -186,15 +198,20 @@ void httpd_run(const char *port) {
                 if (epoll_ctl(epollfd, EPOLL_CTL_ADD, connfd, &ev) == -1)
                     unix_errq("epoll_ctl error");
             }
-            /* Connfd is ready to serve */
+            /* Connfd is ready to read */
             else if (events[i].events & EPOLLIN) {
                 connfd = events[i].data.fd;
-                doit(connfd);
+                /* Workers will close connfd, so we delete it from epoll. */
                 if (epoll_ctl(epollfd, EPOLL_CTL_DEL, connfd, &ev) == -1)
                     unix_errq("epoll_ctl error");
-                if (close(connfd) != 0)
-                    unix_errq("close connfd error");
-                log("close connfd %d\n\n", connfd);
+
+                /* Put connfd in queue and notify workers to serve it */
+                pthread_mutex_lock(&worker_mutex);
+                if (enqueue(&fdq, connfd) != 0)
+                    unix_errq("enqueue error");
+                log("enqueue connfd %d\n\n", connfd);
+                pthread_cond_signal(&worker_cond);
+                pthread_mutex_unlock(&worker_mutex);
             }
             /* Should not reach here. */
             else {  
@@ -203,10 +220,56 @@ void httpd_run(const char *port) {
         }
     }
     
+    /* Notify all workers it's time to terminate. */
+    pthread_mutex_lock(&worker_mutex);
+    pthread_cond_broadcast(&worker_cond);
+    pthread_mutex_unlock(&worker_mutex);
+
+    /* Wait all workers. */
+    for (i = 0; i < NTHREADS; ++i) {
+        printf("wait thread %ld\n", (long)tids[i]);
+        if ((rc = pthread_join(tids[i], NULL)) != 0)
+            posix_errq(rc, "pthread join error");
+    }
+
+    /* Release resource. */
     if (close(listenfd) != 0)
         unix_errq("close listenfd error");
     if (close(epollfd) != 0)
         unix_errq("epoll close error");
+}
+
+void *worker_thread(void *arg) {
+    sigset_t mask;
+    int connfd;
+
+    /* Block all signals. */
+    sigfillset(&mask);
+    pthread_sigmask(SIG_SETMASK, &mask, NULL);
+
+    while (1) {
+        pthread_mutex_lock(&worker_mutex);
+        while (!termflag && queue_empty(&fdq))
+            pthread_cond_wait(&worker_cond, &worker_mutex);
+        if (termflag && queue_empty(&fdq)) {
+            /* 
+             * Termflag is set and we have served all connfd from fdq.
+             * Now terminate.
+             */
+            pthread_mutex_unlock(&worker_mutex);
+            break;
+        }
+        if (dequeue(&fdq, &connfd) != 0)
+            unix_errq("dequeue error");
+        log("dequeue connfd %d\n\n", connfd);
+        pthread_mutex_unlock(&worker_mutex);
+
+        doit(connfd);
+        if (close(connfd) != 0)
+            unix_errq("close connfd error");        
+    }
+
+    return 0;
 }
 
 int doit(int connfd) {
