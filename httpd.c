@@ -23,6 +23,7 @@
 #include "rio.h"
 #include "error.h"
 #include "http-utils.h"
+#include "queue.h"
 
 // #define LOG
 #ifdef LOG
