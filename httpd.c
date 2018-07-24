@@ -25,7 +25,6 @@
 #include "http-utils.h"
 #include "queue.h"
 
-// #define LOG
 #ifdef LOG
     #define log(format, ...) \
         do { \
@@ -37,15 +36,17 @@
 
 #define	MAXLINE	    4096  /* Max text line length */
 #define MAXBUF      8192  /* Max I/O buffer size */
-#define MAXEVENTS   1024
-#define NTHREADS    4
+#define MAXEVENTS   1024  /* Max epoll event size */
+#define NTHREADS    4     /* Number of worker threads */
 
 static const char *httpd_name = "The Naive HTTP Server";
-static sig_atomic_t termflag = 0;
 static char *workdir = NULL;
+
+/* Used to transfer connfd between the main thread and worker threads. */
+static queue_t fdq; 
 static pthread_mutex_t worker_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t worker_cond = PTHREAD_COND_INITIALIZER;
-static queue_t fdq;
+static sig_atomic_t termflag = 0;
 
 void show_usage(const char *name);
 void normalize_dir(char *dir);
@@ -68,7 +69,7 @@ int main(int argc, char *argv[]) {
     int opt;
     char *port = NULL;
 
-    /* Initialize variables */
+    /* Initialize variables. */
     if (queue_init(&fdq) != 0)
         unix_errq("queue_init error");
 
@@ -162,7 +163,7 @@ void httpd_run(const char *port) {
     if (epoll_ctl(epollfd, EPOLL_CTL_ADD, listenfd, &ev) == -1)
         unix_errq("epoll_ctl add error");
     
-    /* Create worker threads */
+    /* Create worker threads. */
     for (i = 0; i < NTHREADS; ++i) {
         if ((rc = pthread_create(&tids[i], NULL, worker_thread, NULL)) != 0)
             posix_errq(rc, "pthread create error");
@@ -198,14 +199,14 @@ void httpd_run(const char *port) {
                 if (epoll_ctl(epollfd, EPOLL_CTL_ADD, connfd, &ev) == -1)
                     unix_errq("epoll_ctl error");
             }
-            /* Connfd is ready to read */
+            /* Connfd is ready to read. */
             else if (events[i].events & EPOLLIN) {
                 connfd = events[i].data.fd;
                 /* Workers will close connfd, so we delete it from epoll. */
                 if (epoll_ctl(epollfd, EPOLL_CTL_DEL, connfd, &ev) == -1)
                     unix_errq("epoll_ctl error");
 
-                /* Put connfd in queue and notify workers to serve it */
+                /* Put connfd in queue and notify workers to serve it. */
                 pthread_mutex_lock(&worker_mutex);
                 if (enqueue(&fdq, connfd) != 0)
                     unix_errq("enqueue error");
@@ -227,7 +228,6 @@ void httpd_run(const char *port) {
 
     /* Wait all workers. */
     for (i = 0; i < NTHREADS; ++i) {
-        printf("wait thread %ld\n", (long)tids[i]);
         if ((rc = pthread_join(tids[i], NULL)) != 0)
             posix_errq(rc, "pthread join error");
     }
@@ -241,11 +241,12 @@ void httpd_run(const char *port) {
 
 void *worker_thread(void *arg) {
     sigset_t mask;
-    int connfd;
+    int connfd, rc;
 
     /* Block all signals. */
     sigfillset(&mask);
-    pthread_sigmask(SIG_SETMASK, &mask, NULL);
+    if ((rc = pthread_sigmask(SIG_SETMASK, &mask, NULL)) != 0)
+        posix_errq(rc, "pthread_sigmask error");
 
     while (1) {
         pthread_mutex_lock(&worker_mutex);
@@ -259,11 +260,13 @@ void *worker_thread(void *arg) {
             pthread_mutex_unlock(&worker_mutex);
             break;
         }
+        /* Get connfd from queue. */
         if (dequeue(&fdq, &connfd) != 0)
             unix_errq("dequeue error");
         log("dequeue connfd %d\n\n", connfd);
         pthread_mutex_unlock(&worker_mutex);
 
+        /* Serve connfd. */
         doit(connfd);
         if (close(connfd) != 0)
             unix_errq("close connfd error");        
@@ -290,7 +293,7 @@ int doit(int connfd) {
     log("%s", buf);
 
     /* Check method. */
-    if (strcasecmp(method, "GET")) {    /* We only support GET method*/
+    if (strcasecmp(method, "GET")) { /* We only support GET method */
         clienterror(connfd, method, "501", "Not Implemented",
                     "We haven't implemented this method");
         return 0;
