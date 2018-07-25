@@ -46,7 +46,7 @@ static char *workdir = NULL;
 static queue_t fdq;
 static pthread_mutex_t worker_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t worker_cond = PTHREAD_COND_INITIALIZER;
-static sig_atomic_t termflag = 0;
+static volatile sig_atomic_t termflag = 0;
 
 void show_usage(const char *name);
 void normalize_dir(char *dir);
