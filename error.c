@@ -19,7 +19,7 @@ void set_err_to_stderr(void) {
 }
 
 void set_err_to_syslog(void) {
-    err_to_syslog = 0;
+    err_to_syslog = 1;
 }
 
 /*
