@@ -1,12 +1,12 @@
 TARG = httpd
 OBJ = httpd.o http-utils.o rio.o error.o queue.o
-COMPILER = gcc
+CC = gcc
 CFLAGS = -g -O2 -Wall
 
-TARG: $(OBJ)
-	$(COMPILER) $(CFLAGS) -o $(TARG) $(OBJ) -lpthread
+$(TARG): $(OBJ)
+	$(CC) $(CFLAGS) -o $(TARG) $(OBJ) -lpthread
 	
-run: TARG
+run: $(TARG)
 	./$(TARG) -p 8080 ./site
 
 .PHONY: clean cleanobj
